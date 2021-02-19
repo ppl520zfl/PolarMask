@@ -33,6 +33,7 @@ model = dict(
             alpha=0.25,
             loss_weight=1.0),
         loss_bbox=dict(type='IoULoss', loss_weight=1.0),
+        loss_mask=dict(type='MaskIOULoss'),
         loss_centerness=dict(
             type='CrossEntropyLoss', use_sigmoid=True, loss_weight=1.0)))
 # training and testing settings
@@ -128,7 +129,14 @@ total_epochs = 12
 device_ids = range(4)
 dist_params = dict(backend='nccl')
 log_level = 'INFO'
-work_dir = './work_dirs/trash'
+work_dir = './work_dirs'
 load_from = None
 resume_from = None
 workflow = [('train', 1)]
+wandb = dict(
+    entity='ppl',
+    project='polarmask',
+    log=True,
+    notes='polarshift',
+    use_wandb=True
+)

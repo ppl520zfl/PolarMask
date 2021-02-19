@@ -2,7 +2,10 @@ from __future__ import division
 import argparse
 import os
 
+import torch.distributed as dist
 import torch
+import wandb
+from .wandb_utils import Wandb
 from mmcv import Config
 
 from mmdet import __version__
@@ -13,6 +16,20 @@ from mmdet.models import build_detector
 
 from IPython import embed
 
+
+
+def str2bool(v):
+    r""" str2bool
+    very useful if use bash to train.
+    """
+    if isinstance(v, bool):
+        return v
+    if v.lower() in ('yes', 'true', 't', 'y', '1'):
+        return True
+    elif v.lower() in ('no', 'false', 'f', 'n', '0'):
+        return False
+    else:
+        raise argparse.ArgumentTypeError('Boolean value expected.')
 
 
 def parse_args():
@@ -42,7 +59,6 @@ def parse_args():
         '--autoscale-lr',
         action='store_true',
         help='automatically scale lr with the number of gpus')
-
     parser.add_argument(
         '--debug',
         action='store_true',
@@ -53,6 +69,10 @@ def parse_args():
         default=1,
         help='tmp use')
     args = parser.parse_args()
+    parser.add_argument('--use_wandb', type=str2bool,
+                        nargs='?',  # nargs='?' means zero or one argument
+                        const=True,
+                        help='set this to false if do not wana use wandb')
     if 'LOCAL_RANK' not in os.environ:
         os.environ['LOCAL_RANK'] = str(args.local_rank)
 
@@ -72,7 +92,6 @@ def main():
     if args.resume_from is not None:
         cfg.resume_from = args.resume_from
     cfg.gpus = args.gpus
-
     if args.autoscale_lr:
         # apply the linear scaling rule (https://arxiv.org/abs/1706.02677)
         cfg.optimizer['lr'] = cfg.optimizer['lr'] * cfg.gpus / 8
@@ -97,6 +116,20 @@ def main():
         cfg.model, train_cfg=cfg.train_cfg, test_cfg=cfg.test_cfg)
 
     datasets = [build_dataset(cfg.data.train)]
+    if args.use_wandb is not None:
+        cfg.wandb.use_wandb = args.use_wandb
+    metrics = {
+        'loss_cls': cfg.model.bbox_head.loss_cls,
+        'loss_bbox': cfg.model.bbox_head.loss_bbox,
+        'loss_centerness': cfg.model.bbox_head.loss_centerness,
+        'loss_mask': cfg.model.bbox_head.loss_mask,
+        'learning_rate': cfg.optimizer.lr
+    }
+    wandb.init()
+    for epoch in range(1, cfg.total_epochs + 1):
+        if dist.get_rank() == 0:
+            if cfg.wandb.use_wandb:
+                wandb.log(metrics, epoch)
     if len(cfg.workflow) == 2:
         datasets.append(build_dataset(cfg.data.val))
     if cfg.checkpoint_config is not None:
@@ -115,6 +148,7 @@ def main():
         distributed=distributed,
         validate=args.validate,
         logger=logger)
+
 
 
 def test():
@@ -144,7 +178,10 @@ def test():
 
 if __name__ == '__main__':
     args = parse_args()
+    cfg = Config.fromfile(args.config)
     if not args.debug:
+        cfg.wandb.name = cfg.log_name
+        Wandb.launch(cfg, cfg.wandb.use_wandb)
         main()
     else:
         test()
